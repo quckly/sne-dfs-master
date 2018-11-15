@@ -9,6 +9,10 @@ import pw.quckly.sne.dfs.master.api.*
  */
 class DfsMaster {
 
+    // https://github.com/SerCeMan/jnr-fuse/blob/master/src/main/java/ru/serce/jnrfuse/examples/MemoryFS.java
+
+    val rootDir = MemoryDirectory("")
+
     // Clients methods
 
     fun read(request: ReadRequest): ReadResponse {
@@ -54,4 +58,8 @@ class DfsMaster {
     fun open(request: FilePathRequest): StatusResponse {
 
     }
+
+    // Utils
+
+
 }

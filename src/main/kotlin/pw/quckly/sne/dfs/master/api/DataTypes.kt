@@ -12,6 +12,6 @@ data class ReadResponse(val status: Int, val data: String)
 data class WriteRequest(val path: String, val offset: Long, val data: String)
 
 data class ReadDirRequest(val path: String)
-data class ReadDirResponse(val status: Int, val content: Array<String>)
+data class ReadDirResponse(val status: Int, val contents: Array<String>)
 
 data class RenameRequest(val from: String, val to: String, val exchange: Boolean)
