@@ -26,7 +26,7 @@ class DfsHttpApiController(val dfsMaster: DfsMaster) {
     }
 
     @PostMapping("/fs/getattr")
-    fun getattr(@RequestBody request: FilePathRequest): IntResponse {
+    fun getattr(@RequestBody request: FilePathRequest): AttrResponse {
         return dfsMaster.getattr(request)
     }
 
@@ -51,7 +51,7 @@ class DfsHttpApiController(val dfsMaster: DfsMaster) {
     }
 
     @PostMapping("/fs/truncate")
-    fun truncate(@RequestBody request: FilePathRequest): StatusResponse {
+    fun truncate(@RequestBody request: TruncateRequest): StatusResponse {
         return dfsMaster.truncate(request)
     }
 

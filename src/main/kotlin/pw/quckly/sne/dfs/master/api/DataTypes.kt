@@ -15,3 +15,7 @@ data class ReadDirRequest(val path: String)
 data class ReadDirResponse(val status: Int, val contents: Array<String>)
 
 data class RenameRequest(val from: String, val to: String, val exchange: Boolean)
+
+data class TruncateRequest(val path: String, val size: Long)
+
+data class AttrResponse(val status: Int, val mode: Int, val size: Long, val uid: Int, val gid: Int)
