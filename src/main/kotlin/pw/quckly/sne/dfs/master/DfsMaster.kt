@@ -205,5 +205,7 @@ class DfsMaster {
 
     companion object {
         val OK_RESPONSE = 0
+
+        val CHUNK_SIZE = 4 * 1024
     }
 }
