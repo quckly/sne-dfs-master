@@ -29,7 +29,8 @@ class SlaveServer(val id: Int,
     }
 
     fun freeChunk(chunkId: Int) {
-        TODO("")
+        chunks.clear(chunkId)
+        ++freeChunkCount
     }
 
     fun hasSpace() = freeChunkCount > 0
@@ -50,9 +51,6 @@ class DfsMaster {
     val rootDir = MemoryDirectory("", this)
     // In-consistency slave servers
     val servers = CopyOnWriteArrayList<SlaveServer>()
-
-    val b64encoder = Base64.getEncoder()
-    val b64decoder = Base64.getDecoder()
 
     // Slave methods
 
@@ -155,7 +153,9 @@ class DfsMaster {
     }
 
     fun freeChunk(fileChunk: FileChunk) {
-        TODO("")
+        for (serverChunk in fileChunk.mapping) {
+            getServerById(serverChunk.first)?.freeChunk(serverChunk.second)
+        }
     }
 
     fun getServerByGuid(guid: String): SlaveServer? {
@@ -352,5 +352,8 @@ class DfsMaster {
         val CHUNK_SIZE = 4 * 1024
 
         val REPLICA_COUNT = 2
+
+        val b64encoder = Base64.getEncoder()
+        val b64decoder = Base64.getDecoder()
     }
 }

@@ -1,7 +1,13 @@
 package pw.quckly.sne.dfs.master
 
+import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import com.github.kittinunf.fuel.Fuel
+import com.github.kittinunf.result.Result
 import pw.quckly.sne.dfs.master.api.AttrResponse
 import pw.quckly.sne.dfs.master.api.DfsException
+import pw.quckly.sne.dfs.master.api.StorageWriteRequest
 import ru.serce.jnrfuse.ErrorCodes
 import ru.serce.jnrfuse.struct.FileStat
 import java.util.*
@@ -140,8 +146,28 @@ class MemoryFile(name: String, parent: MemoryDirectory, val dfs: DfsMaster) : Me
 
         val chunk = getFileChunkById(chunkId)
 
-        // chunk.write
-        // foreach rest write
+        for (serverChunk in chunk.mapping) {
+            val server = dfs.getServerById(serverChunk.first) ?: throw DfsException(ErrorCodes.EIO(), "Fatal error")
+
+            val b64data = b64encoder.encode(data).toString(Charsets.UTF_8)
+            val writeRequest = StorageWriteRequest(serverChunk.second,
+                    (offset % DfsMaster.CHUNK_SIZE).toInt(),
+                    b64data)
+            val writeRequestJson = jsonMapper.writeValueAsString(writeRequest)
+
+            val fuelResponse = Fuel.post("http://${server.serverAddress}:${server.serverPort}/write")
+                    .jsonBody(writeRequestJson)
+                    .responseString()
+
+            when (fuelResponse.third) {
+                is Result.Success -> {
+
+                }
+                is Result.Failure -> {
+
+                }
+            }
+        }
 
 
         TODO("not implemented")
@@ -154,7 +180,9 @@ class MemoryFile(name: String, parent: MemoryDirectory, val dfs: DfsMaster) : Me
 
     @Synchronized
     override fun delete() {
-        TODO("not implemented")
+        chunks.forEach { dfs.freeChunk(it) }
+        chunks.clear()
+        size = 0
     }
 
     override fun getAttr(): AttrResponse {
@@ -179,6 +207,14 @@ class MemoryFile(name: String, parent: MemoryDirectory, val dfs: DfsMaster) : Me
 
     fun getFileChunkById(id: Int): FileChunk {
         return chunks[id]
+    }
+
+    companion object {
+        val jsonMapper = ObjectMapper().registerKotlinModule()
+                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+
+        val b64encoder = Base64.getEncoder()
+        val b64decoder = Base64.getDecoder()
     }
 }
 
