@@ -4,7 +4,8 @@ import pw.quckly.sne.dfs.master.api.AttrResponse
 import pw.quckly.sne.dfs.master.api.DfsException
 import ru.serce.jnrfuse.ErrorCodes
 import ru.serce.jnrfuse.struct.FileStat
-import java.util.ArrayList
+import java.util.*
+import java.util.concurrent.CopyOnWriteArrayList
 
 class FileChunk {
     // Mapping ServerID -> ChunkID
@@ -101,19 +102,53 @@ class MemoryDirectory : MemoryPath {
 class MemoryFile(name: String, parent: MemoryDirectory, val dfs: DfsMaster) : MemoryPath(name, parent) {
 
     var size: Long = 0
-    var chunks = arrayOf<FileChunk>()
+    var chunks = CopyOnWriteArrayList<FileChunk>()
 
-    fun read(size: Long, offset: Long): ByteArray {
-        return byteArrayOf()
-    }
+    fun read(offset: Long, size: Long): ByteArray {
+        if (!checkBoundaries(offset, size)) {
+            throw DfsException(ErrorCodes.EIO(), "You can read no more one chunk.")
+        }
 
-    @Synchronized
-    fun truncate(size: Long) {
+
+        return ByteArray(size.toInt(), { 0x37 })
         TODO("not implemented")
     }
 
     @Synchronized
-    fun write(data: ByteArray, offset: Long) {
+    fun write(offset: Long, data: ByteArray) {
+        val size = data.size
+
+        if (!checkBoundaries(offset, size.toLong())) {
+            throw DfsException(ErrorCodes.EIO(), "You can write no more one chunk.")
+        }
+
+        // Find chunk that we need to write
+        // It can be already used chunk or new
+        val rightBorder = offset + size - 1
+
+        val chunkId = getFileChunkByOffset(offset)
+
+        // Allow to write only to next unused chunk
+        if (chunkId > (chunks.size - 1) + 1) {
+            throw DfsException(ErrorCodes.EIO(), "You can write to consequentially chunk.")
+        }
+
+        // Allocate new chunk if needs
+        if (chunkId > (chunks.size - 1)) {
+            allocateChunk()
+        }
+
+        val chunk = getFileChunkById(chunkId)
+
+        // chunk.write
+        // foreach rest write
+
+
+        TODO("not implemented")
+    }
+
+    @Synchronized
+    fun truncate(size: Long) {
         TODO("not implemented")
     }
 
@@ -125,6 +160,25 @@ class MemoryFile(name: String, parent: MemoryDirectory, val dfs: DfsMaster) : Me
     override fun getAttr(): AttrResponse {
         // 0777 == 0x1FF
         return AttrResponse(0, FileStat.S_IFREG or 0x1FF, size, -1, -1)
+    }
+
+    fun allocateChunk() {
+        val chunk = dfs.allocateChunk()
+
+        chunks.add(chunk)
+    }
+
+    fun checkBoundaries(offset: Long, size: Long): Boolean {
+        val l = offset
+        val r = offset + size - 1
+
+        return size > 0 && (getFileChunkByOffset(l) == getFileChunkByOffset(r))
+    }
+
+    fun getFileChunkByOffset(offset: Long) = (offset / DfsMaster.CHUNK_SIZE).toInt()
+
+    fun getFileChunkById(id: Int): FileChunk {
+        return chunks[id]
     }
 }
 

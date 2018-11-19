@@ -4,9 +4,15 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RestController
 import pw.quckly.sne.dfs.master.DfsMaster
+import javax.servlet.http.HttpServletRequest
 
 @RestController
 class DfsHttpApiController(val dfsMaster: DfsMaster) {
+
+    @PostMapping("/master/register")
+    fun registerSlave(@RequestBody request: SlaveRegisterRequest, servletRequest: HttpServletRequest) {
+        dfsMaster.registerSlave(request, servletRequest.remoteAddr)
+    }
 
     // Controllers for POSIX FUSE Client
 

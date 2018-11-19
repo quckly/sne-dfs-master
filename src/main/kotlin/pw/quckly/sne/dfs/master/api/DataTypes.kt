@@ -1,8 +1,10 @@
 package pw.quckly.sne.dfs.master.api
 
+data class SlaveRegisterRequest(val guid: String, val port: Int, val chunksCount: Int)
+
 // Common data structures
 data class FilePathRequest(val path: String)
-data class StatusResponse(val status: Int)
+data class StatusResponse(val status: Int, val message: String? = null)
 data class IntResponse(val status: Int, val value: Int)
 
 // Per operation
