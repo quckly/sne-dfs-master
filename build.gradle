@@ -49,7 +49,6 @@ dependencies {
     implementation('com.fasterxml.jackson.module:jackson-module-kotlin')
     implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
-    compileOnly('org.projectlombok:lombok')
 
     implementation('com.github.serceman:jnr-fuse:0.5.2.1')
     implementation("com.github.kittinunf.fuel:fuel:${fuelVersion}")

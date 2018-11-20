@@ -16,7 +16,7 @@ data class WriteRequest(val path: String, val offset: Long, val data: String)
 data class ReadDirRequest(val path: String)
 data class ReadDirResponse(val status: Int, val contents: Array<String>)
 
-data class RenameRequest(val from: String, val to: String, val exchange: Boolean)
+data class RenameRequest(val from: String, val to: String)
 
 data class TruncateRequest(val path: String, val size: Long)
 

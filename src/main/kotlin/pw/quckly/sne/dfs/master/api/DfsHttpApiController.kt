@@ -1,8 +1,11 @@
 package pw.quckly.sne.dfs.master.api
 
-import org.springframework.web.bind.annotation.PostMapping
-import org.springframework.web.bind.annotation.RequestBody
-import org.springframework.web.bind.annotation.RestController
+import org.springframework.http.HttpHeaders
+import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.*
+import org.springframework.web.context.request.WebRequest
+import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler
 import pw.quckly.sne.dfs.master.DfsMaster
 import javax.servlet.http.HttpServletRequest
 
@@ -69,5 +72,38 @@ class DfsHttpApiController(val dfsMaster: DfsMaster) {
     @PostMapping("/fs/open")
     fun open(@RequestBody request: FilePathRequest): StatusResponse {
         return dfsMaster.open(request)
+    }
+
+    @ControllerAdvice
+    class RestResponseEntityExceptionHandler : ResponseEntityExceptionHandler() {
+
+        @ExceptionHandler(DfsException::class)
+        fun handleDfsExceptions(ex: Exception, request: WebRequest): ResponseEntity<StatusResponse> {
+            if (ex is DfsException) {
+                logger.error("FS API Error: ${ex.message}")
+
+                val response = StatusResponse(ex.errorCode,
+                        ex.errorMessage)
+
+                return ResponseEntity(response, HttpHeaders(), HttpStatus.BAD_REQUEST)
+            }
+
+            logger.error("Strange error", ex)
+
+            val response = StatusResponse(-1,
+                    ex.message)
+
+            return ResponseEntity(response, HttpHeaders(), HttpStatus.BAD_REQUEST)
+        }
+
+        @ExceptionHandler(Exception::class)
+        fun handleExceptions(ex: Exception, request: WebRequest): ResponseEntity<StatusResponse> {
+            ex.printStackTrace()
+
+            val response = StatusResponse(-1,
+                    ex.message)
+
+            return ResponseEntity(response, HttpHeaders(), HttpStatus.BAD_REQUEST)
+        }
     }
 }
