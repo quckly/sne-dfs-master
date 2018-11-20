@@ -34,6 +34,8 @@ class SlaveServer(val id: Int,
     }
 
     fun hasSpace() = freeChunkCount > 0
+
+    fun getUrl() = "http://${serverAddress}:${serverPort}"
 }
 
 /***
@@ -43,6 +45,10 @@ class SlaveServer(val id: Int,
  *
  * Some code taken from https://github.com/SerCeMan/jnr-fuse/blob/master/src/main/java/ru/serce/jnrfuse/examples/MemoryFS.java
  */
+
+// TODO: Client LOGS
+// TODO: DIRECTORY SIZE, ROOT FREE SPACE
+// TODO: Redistribute files OR replicate
 class DfsMaster {
 
     // Used to map file chunks to <serverId;chunkId> pair
@@ -135,7 +141,7 @@ class DfsMaster {
     fun allocateChunk(): FileChunk {
         val serverCandidates = servers
                 // First insert data to more free servers
-                .filter { it.hasSpace() }
+                .filter { it.available && it.hasSpace() }
                 .sortedByDescending { it.freeChunkCount }
                 .take(REPLICA_COUNT)
 

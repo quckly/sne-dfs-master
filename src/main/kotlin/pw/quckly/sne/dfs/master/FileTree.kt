@@ -132,45 +132,72 @@ class MemoryFile(name: String, parent: MemoryDirectory, val dfs: DfsMaster) : Me
         // It can be already used chunk or new
         val rightBorder = offset + size - 1
 
-        val chunkId = getFileChunkByOffset(offset)
+        val fileChunkId = getFileChunkByOffset(offset)
 
         // Allow to write only to next unused chunk
-        if (chunkId > (chunks.size - 1) + 1) {
+        if (fileChunkId > (chunks.size - 1) + 1) {
             throw DfsException(ErrorCodes.EIO(), "You can write to consequentially chunk.")
         }
 
         // Allocate new chunk if needs
-        if (chunkId > (chunks.size - 1)) {
+        if (fileChunkId > (chunks.size - 1)) {
             allocateChunk()
         }
 
-        val chunk = getFileChunkById(chunkId)
+        val chunk = getFileChunkById(fileChunkId)
 
-        for (serverChunk in chunk.mapping) {
-            val server = dfs.getServerById(serverChunk.first) ?: throw DfsException(ErrorCodes.EIO(), "Fatal error")
+        // Check servers availability
+        for ((serverId, serverChunkId) in chunk.mapping) {
+            val server = dfs.getServerById(serverId) ?: throw DfsException(ErrorCodes.EIO(), "Fatal error")
+
+            // If Server which we want to write is unvailable
+            // Put this chunk in READ-ONLY mode
+            if (!server.available) {
+                throw DfsException(ErrorCodes.EINVAL(), "Cannot write to chunk that is linked to unavailable server.")
+            }
+        }
+
+        // Collect statuses of all write operations
+        val statuses = BooleanArray(chunk.mapping.size)
+
+        var mappingId = 0
+        for ((serverId, serverChunkId) in chunk.mapping) {
+            val server = dfs.getServerById(serverId) ?: throw DfsException(ErrorCodes.EIO(), "Fatal error")
 
             val b64data = b64encoder.encode(data).toString(Charsets.UTF_8)
-            val writeRequest = StorageWriteRequest(serverChunk.second,
+            val writeRequest = StorageWriteRequest(serverChunkId,
                     (offset % DfsMaster.CHUNK_SIZE).toInt(),
                     b64data)
             val writeRequestJson = jsonMapper.writeValueAsString(writeRequest)
 
-            val fuelResponse = Fuel.post("http://${server.serverAddress}:${server.serverPort}/write")
+            val (fuelRequest, fuelResponse, fuelResult) = Fuel.post("${server.getUrl()}/write")
                     .jsonBody(writeRequestJson)
-                    .responseString()
+                    .responseString() // Blocking
 
-            when (fuelResponse.third) {
+            when (fuelResult) {
                 is Result.Success -> {
-
+                    statuses[mappingId] = true
                 }
                 is Result.Failure -> {
-
+                    statuses[mappingId] = false
                 }
             }
+
+            ++mappingId
         }
 
+        // Check results
+        val successChunksCount = statuses.count { it }
+        if (successChunksCount == chunk.mapping.size) {
+            // All whiten
 
-        TODO("not implemented")
+        } else if (successChunksCount > 0) {
+            // At least one
+
+        } else {
+            // No one
+            throw DfsException(ErrorCodes.EINVAL(), "Cannot write to any chunks")
+        }
     }
 
     @Synchronized
