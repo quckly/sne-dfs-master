@@ -1,5 +1,7 @@
 package pw.quckly.sne.dfs.master
 
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.stereotype.Component
 import pw.quckly.sne.dfs.master.api.*
 import ru.serce.jnrfuse.ErrorCodes
 import java.lang.IllegalStateException
@@ -9,8 +11,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 class SlaveServer(val id: Int,
                   val guid: String,
                   val chunkCount: Int,
-                  val serverAddress: String,
-                  val serverPort: Int) {
+                  var serverAddress: String,
+                  var serverPort: Int) {
 
     var freeChunkCount = chunkCount
     var chunks = BitSet(chunkCount)
@@ -49,7 +51,11 @@ class SlaveServer(val id: Int,
 // TODO: Client LOGS
 // TODO: DIRECTORY SIZE, ROOT FREE SPACE
 // TODO: Redistribute files OR replicate
+@Component
 class DfsMaster {
+
+    @Value("\${app.requests.timeout}")
+    var requestTimeout = 2000
 
     // Used to map file chunks to <serverId;chunkId> pair
     var lastServerId = 0;
@@ -69,6 +75,10 @@ class DfsMaster {
             if (request.chunksCount == existenServer.chunkCount) {
                 // Restore server from shutdown
                 existenServer.available = true
+
+                // Server IP and port can be changed
+                existenServer.serverAddress = serverAddress
+                existenServer.serverPort = request.port
                 return
             }
         }
@@ -124,7 +134,7 @@ class DfsMaster {
                 lateinit var data: ByteArray
 
                 try {
-                    data = b64decoder.decode(data)
+                    data = b64decoder.decode(request.data)
                 } catch (e: IllegalArgumentException) {
                     throw DfsException(ErrorCodes.EIO(), e.message ?: "Base64 error")
                 }
@@ -205,7 +215,7 @@ class DfsMaster {
     fun mkdir(request: FilePathRequest): StatusResponse {
         val path = getPath(request.path)
 
-        if (path == null)
+        if (path != null)
             return StatusResponse(ErrorCodes.EEXIST())
 
         val parent = getParentPath(request.path)
@@ -228,15 +238,10 @@ class DfsMaster {
         if (path == null)
             throw DfsException(ErrorCodes.ENOENT())
 
-        when (path) {
-            null -> {
-                throw DfsException(ErrorCodes.ENOENT())
-            }
-            is MemoryDirectory -> {
-                // Add pseudo directories
-                val contents = arrayOf(".", "..") + path.contents()
-                return ReadDirResponse(OK_RESPONSE, contents)
-            }
+        if (path is MemoryDirectory) {
+            // Add pseudo directories
+            val contents = arrayOf(".", "..") + path.contents()
+            return ReadDirResponse(OK_RESPONSE, contents)
         }
 
         throw DfsException(ErrorCodes.ENOTDIR())
@@ -259,14 +264,14 @@ class DfsMaster {
             }
             is MemoryDirectory -> {
                 path.changeParent(newParent)
-                path.rename(request.to)
+                path.rename(getLastComponent(request.to))
+
+                return StatusResponse(OK_RESPONSE)
             }
             else -> {
                 return StatusResponse(ErrorCodes.ENOTDIR())
             }
         }
-
-        return StatusResponse(ErrorCodes.ENOENT())
     }
 
     fun rmdir(request: FilePathRequest): StatusResponse {

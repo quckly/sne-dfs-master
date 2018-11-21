@@ -7,10 +7,10 @@ import org.springframework.context.annotation.Bean
 @SpringBootApplication
 class SneDfsMasterApplication {
 
-    @Bean
-    fun createDfsMaster(): DfsMaster {
-        return DfsMaster()
-    }
+//    @Bean
+//    fun createDfsMaster(): DfsMaster {
+//        return DfsMaster()
+//    }
 }
 
 fun main(args: Array<String>) {

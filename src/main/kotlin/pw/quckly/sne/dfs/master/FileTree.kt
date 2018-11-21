@@ -4,12 +4,12 @@ import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.github.kittinunf.fuel.Fuel
+import com.github.kittinunf.fuel.jackson.responseObject
 import com.github.kittinunf.result.Result
-import pw.quckly.sne.dfs.master.api.AttrResponse
-import pw.quckly.sne.dfs.master.api.DfsException
-import pw.quckly.sne.dfs.master.api.StorageWriteRequest
+import pw.quckly.sne.dfs.master.api.*
 import ru.serce.jnrfuse.ErrorCodes
 import ru.serce.jnrfuse.struct.FileStat
+import java.lang.IllegalArgumentException
 import java.util.*
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -111,13 +111,72 @@ class MemoryFile(name: String, parent: MemoryDirectory, val dfs: DfsMaster) : Me
     var chunks = CopyOnWriteArrayList<FileChunk>()
 
     fun read(offset: Long, size: Long): ByteArray {
+        // No more one chunk and size > 0
         if (!checkBoundaries(offset, size)) {
             throw DfsException(ErrorCodes.EIO(), "You can read no more one chunk.")
         }
 
+        // Find chunk
+        val fileChunkId = getFileChunkByOffset(offset)
 
-        return ByteArray(size.toInt(), { 0x37 })
-        TODO("not implemented")
+        // Check end of chunks
+        if (fileChunkId > (chunks.size - 1)) {
+            throw DfsException(DfsMaster.OK_RESPONSE, "End of file.")
+        }
+
+        // Determine last read byte and count
+        val rightBorder = Math.min(offset + size - 1, size - 1)
+        val bytesToRead = Math.max((rightBorder - offset + 1).toInt(), 0)
+
+        if (bytesToRead == 0) {
+            return byteArrayOf()
+        }
+
+        val chunk = getFileChunkById(fileChunkId)
+
+        // Read from server in random order for load-balancing purposes
+        // But requests can fail
+        val shuffledChunkMappings = chunk.mapping.shuffled()
+
+        // Try read from any server
+        chunkMappingLoop@ for ((serverId, serverChunkId) in shuffledChunkMappings) {
+            val server = dfs.getServerById(serverId) ?: throw DfsException(ErrorCodes.EIO(), "Fatal error")
+
+            if (!server.available) {
+                continue@chunkMappingLoop
+            }
+
+            val readRequest = StorageReadRequest(serverChunkId,
+                    (offset % DfsMaster.CHUNK_SIZE).toInt(),
+                    bytesToRead)
+            val readRequestJson = jsonMapper.writeValueAsString(readRequest)
+
+            val (fuelRequest, fuelResponse, fuelResult) = Fuel.post("${server.getUrl()}/storage/read")
+                    .jsonBody(readRequestJson)
+                    .timeout(dfs.requestTimeout)
+                    .timeoutRead(dfs.requestTimeout)
+                    .responseObject<StorageReadResponse>()
+
+            when (fuelResult) {
+                is Result.Success -> {
+                    val response = fuelResult.value
+                    try {
+                        val data = b64decoder.decode(response.data)
+                        return data
+                    } catch (e: IllegalArgumentException) {
+                        continue@chunkMappingLoop
+                    }
+                }
+                is Result.Failure -> {
+                    // TODO: Some checks?
+                    server.available = false
+
+                    continue@chunkMappingLoop
+                }
+            }
+        }
+
+        throw DfsException(ErrorCodes.EIO(), "Cannot read from any servers")
     }
 
     @Synchronized
@@ -170,8 +229,10 @@ class MemoryFile(name: String, parent: MemoryDirectory, val dfs: DfsMaster) : Me
                     b64data)
             val writeRequestJson = jsonMapper.writeValueAsString(writeRequest)
 
-            val (fuelRequest, fuelResponse, fuelResult) = Fuel.post("${server.getUrl()}/write")
+            val (fuelRequest, fuelResponse, fuelResult) = Fuel.post("${server.getUrl()}/storage/write")
                     .jsonBody(writeRequestJson)
+                    .timeout(dfs.requestTimeout)
+                    .timeoutRead(dfs.requestTimeout)
                     .responseString() // Blocking
 
             when (fuelResult) {
@@ -180,6 +241,9 @@ class MemoryFile(name: String, parent: MemoryDirectory, val dfs: DfsMaster) : Me
                 }
                 is Result.Failure -> {
                     statuses[mappingId] = false
+
+                    // TODO: Some checks?
+                    server.available = false
                 }
             }
 
@@ -189,20 +253,26 @@ class MemoryFile(name: String, parent: MemoryDirectory, val dfs: DfsMaster) : Me
         // Check results
         val successChunksCount = statuses.count { it }
         if (successChunksCount == chunk.mapping.size) {
-            // All whiten
+            // All written
 
         } else if (successChunksCount > 0) {
             // At least one
+            // TODO: Some logic maybe
+            throw DfsException(ErrorCodes.EINVAL(), "Some chunks have not written")
 
         } else {
             // No one
+            // TODO: Some logic maybe
             throw DfsException(ErrorCodes.EINVAL(), "Cannot write to any chunks")
         }
     }
 
     @Synchronized
     fun truncate(size: Long) {
-        TODO("not implemented")
+        // TODO: Free unused chunks
+
+        this.size = size
+        // So, do nothing, why not?
     }
 
     @Synchronized
@@ -210,6 +280,11 @@ class MemoryFile(name: String, parent: MemoryDirectory, val dfs: DfsMaster) : Me
         chunks.forEach { dfs.freeChunk(it) }
         chunks.clear()
         size = 0
+
+        val oldParent = parent
+        if (oldParent != null) {
+            oldParent.deleteChild(this)
+        }
     }
 
     override fun getAttr(): AttrResponse {
