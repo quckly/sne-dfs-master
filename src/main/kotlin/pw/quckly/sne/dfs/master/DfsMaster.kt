@@ -1,12 +1,28 @@
 package pw.quckly.sne.dfs.master
 
+import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.core.JsonParser
+import com.fasterxml.jackson.core.TreeNode
+import com.fasterxml.jackson.databind.*
+import com.fasterxml.jackson.module.kotlin.readValue
+import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import com.fasterxml.jackson.module.kotlin.treeToValue
+import com.github.kittinunf.fuel.jackson.mapper
+import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
 import pw.quckly.sne.dfs.master.api.*
 import ru.serce.jnrfuse.ErrorCodes
+import java.io.File
+import java.lang.Exception
 import java.lang.IllegalStateException
 import java.util.*
 import java.util.concurrent.CopyOnWriteArrayList
+import javax.annotation.PostConstruct
+import com.fasterxml.jackson.databind.module.SimpleModule
+import com.fasterxml.jackson.databind.node.ArrayNode
+import kotlin.collections.ArrayList
 
 class SlaveServer(val id: Int,
                   val guid: String,
@@ -37,7 +53,95 @@ class SlaveServer(val id: Int,
 
     fun hasSpace() = freeChunkCount > 0
 
+    @JsonIgnore
     fun getUrl() = "http://${serverAddress}:${serverPort}"
+}
+
+class FileChunkDeserializer : JsonDeserializer<FileChunk>() {
+
+    var jsonMapper: ObjectMapper? = null
+
+    override fun deserialize(p: JsonParser?, ctxt: DeserializationContext?): FileChunk {
+        if (p == null || ctxt == null)
+            throw Exception()
+
+        val jsonMapper = jsonMapper ?: throw Exception("jsonMapper is not initialized")
+
+        val node = p.readValueAsTree<JsonNode>()
+
+        var mappingResult = ArrayList<Pair<Int, Int>>()
+        val mappingNode = node.get("mapping") as ArrayNode
+
+        for (m in mappingNode) {
+            val first: Int = m.get("first").asInt()
+            val second: Int = m.get("second").asInt()
+
+            mappingResult.add(first to second)
+        }
+
+        return FileChunk(mappingResult)
+    }
+}
+
+class MemoryFileDeserializer(val dfsMaster: DfsMaster) : JsonDeserializer<MemoryFile>() {
+
+    var jsonMapper: ObjectMapper? = null
+
+    override fun deserialize(p: JsonParser?, ctxt: DeserializationContext?): MemoryFile {
+        if (p == null || ctxt == null)
+            throw Exception()
+
+        val jsonMapper = jsonMapper ?: throw Exception("jsonMapper is not initialized")
+
+        val node = p.readValueAsTree<JsonNode>()
+
+        val name: String = jsonMapper.treeToValue(node.get("name"))
+        val size: Long = jsonMapper.treeToValue(node.get("size"))
+
+        val chunks = ArrayList<FileChunk>()
+        val chunksNode = node.get("chunks") as ArrayNode
+
+        for (c in chunksNode) {
+            chunks.add(jsonMapper.treeToValue(c))
+        }
+
+        val file = MemoryFile(name, null, dfsMaster)
+        file.chunks = CopyOnWriteArrayList(chunks)
+        file.size = size
+
+        return file
+    }
+}
+
+class MemoryDirectoryDeserializer(val dfsMaster: DfsMaster) : JsonDeserializer<MemoryDirectory>() {
+
+    var jsonMapper: ObjectMapper? = null
+
+    override fun deserialize(p: JsonParser?, ctxt: DeserializationContext?): MemoryDirectory {
+        if (p == null || ctxt == null)
+            throw Exception()
+
+        val jsonMapper = jsonMapper ?: throw Exception("jsonMapper is not initialized")
+
+        val node = p.readValueAsTree<JsonNode>()
+
+        val name: String = jsonMapper.treeToValue(node.get("name"))
+        val contentsNode = node.get("contents") as ArrayNode
+
+        val contents = ArrayList<MemoryPath>()
+
+        for (cpath in contentsNode) {
+            if (cpath.has("contents")) {
+                val dir: MemoryDirectory = jsonMapper.treeToValue(cpath)
+                contents.add(dir)
+            } else {
+                val file: MemoryFile = jsonMapper.treeToValue(cpath)
+                contents.add(file)
+            }
+        }
+
+        return MemoryDirectory(name, dfsMaster, contents)
+    }
 }
 
 /***
@@ -48,21 +152,72 @@ class SlaveServer(val id: Int,
  * Some code taken from https://github.com/SerCeMan/jnr-fuse/blob/master/src/main/java/ru/serce/jnrfuse/examples/MemoryFS.java
  */
 
-// TODO: Client LOGS
-// TODO: DIRECTORY SIZE, ROOT FREE SPACE
-// TODO: Redistribute files OR replicate
 @Component
 class DfsMaster {
 
     @Value("\${app.requests.timeout}")
     var requestTimeout = 2000
+    @Value("\${app.metainfo.location}")
+    var metainfoLocation: String? = null
 
     // Used to map file chunks to <serverId;chunkId> pair
     var lastServerId = 0;
     // In memory FS
-    val rootDir = MemoryDirectory("", this)
+    var rootDir = MemoryDirectory("", this)
     // In-consistency slave servers
     val servers = CopyOnWriteArrayList<SlaveServer>()
+
+    @PostConstruct
+    fun init() {
+        if (metainfoLocation != null) {
+            try {
+                val module = SimpleModule()
+                val memoryDirectoryDeserializer = MemoryDirectoryDeserializer(this)
+                val memoryFileDeserializer = MemoryFileDeserializer(this)
+                val fileChunkDeserializer = FileChunkDeserializer()
+                module.addDeserializer(MemoryDirectory::class.java, memoryDirectoryDeserializer)
+                module.addDeserializer(MemoryFile::class.java, memoryFileDeserializer)
+                module.addDeserializer(FileChunk::class.java, fileChunkDeserializer)
+
+                val jsonMapper = ObjectMapper().registerKotlinModule()
+                        .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+                jsonMapper.registerModule(module)
+
+                memoryDirectoryDeserializer.jsonMapper = jsonMapper
+                memoryFileDeserializer.jsonMapper = jsonMapper
+                fileChunkDeserializer.jsonMapper = jsonMapper
+
+                var dfsState = jsonMapper.readValue(File(metainfoLocation), DfsMasterState::class.java)
+
+                for (server in dfsState.servers) {
+                    server.available = false
+                }
+
+                lastServerId = dfsState.lastServerId
+                rootDir = dfsState.fsRoot
+                servers.addAll(dfsState.servers)
+            } catch (e: Exception) {
+                logger.error("Error on reading a DFS meta information", e)
+            }
+        }
+    }
+
+    fun saveDfsState() {
+        val metainfoLocation = metainfoLocation
+        if (metainfoLocation == null) {
+            logger.error("You must select metainfo file location.")
+        }
+
+        val serializableObject = DfsMasterState(lastServerId,
+                rootDir,
+                servers)
+
+        try {
+            mapper.writeValue(File(metainfoLocation), serializableObject)
+        } catch (e: Exception) {
+            logger.error("Error on try to save metainfo", e)
+        }
+    }
 
     // Slave methods
 
@@ -73,12 +228,19 @@ class DfsMaster {
         if (existenServer != null) {
             // Some checks
             if (request.chunksCount == existenServer.chunkCount) {
+                if (!existenServer.available) {
+                    logger.info("Storage server #${existenServer.id} (${existenServer.guid}) is available.")
+                }
+
                 // Restore server from shutdown
                 existenServer.available = true
 
                 // Server IP and port can be changed
                 existenServer.serverAddress = serverAddress
                 existenServer.serverPort = request.port
+
+                saveDfsState()
+
                 return
             }
         }
@@ -91,6 +253,10 @@ class DfsMaster {
                 request.port)
 
         servers.add(newServer)
+
+        saveDfsState()
+
+        logger.info("New storage server #${newServer.id} is registered. (${serverAddress}:${request.port}) Guid = ${request.guid}, ChunksCount = ${request.chunksCount}")
     }
 
     // Clients methods
@@ -141,6 +307,8 @@ class DfsMaster {
 
                 path.write(request.offset, data)
 
+                saveDfsState()
+
                 return StatusResponse(OK_RESPONSE)
             }
         }
@@ -165,6 +333,8 @@ class DfsMaster {
             fileChunk.mapping.add(server.id to server.allocateChunk())
         }
 
+        saveDfsState()
+
         return fileChunk
     }
 
@@ -172,6 +342,8 @@ class DfsMaster {
         for (serverChunk in fileChunk.mapping) {
             getServerById(serverChunk.first)?.freeChunk(serverChunk.second)
         }
+
+        saveDfsState()
     }
 
     fun getServerByGuid(guid: String): SlaveServer? {
@@ -196,6 +368,8 @@ class DfsMaster {
 
         if (parent is MemoryDirectory) {
             parent.mkfile(getLastComponent(request.path))
+
+            saveDfsState()
 
             return StatusResponse(OK_RESPONSE)
         }
@@ -225,6 +399,8 @@ class DfsMaster {
 
         if (parent is MemoryDirectory) {
             parent.mkdir(getLastComponent(request.path))
+
+            saveDfsState()
 
             return StatusResponse(OK_RESPONSE)
         }
@@ -256,6 +432,11 @@ class DfsMaster {
         if (path == null)
             return StatusResponse(ErrorCodes.ENOENT())
 
+        val targetPath = getPath(request.to)
+
+        if (targetPath != null)
+            return StatusResponse(ErrorCodes.EEXIST())
+
         val newParent = getParentPath(request.to)
 
         when (newParent) {
@@ -265,6 +446,8 @@ class DfsMaster {
             is MemoryDirectory -> {
                 path.changeParent(newParent)
                 path.rename(getLastComponent(request.to))
+
+                saveDfsState()
 
                 return StatusResponse(OK_RESPONSE)
             }
@@ -287,6 +470,9 @@ class DfsMaster {
                 }
 
                 path.delete()
+
+                saveDfsState()
+
                 return StatusResponse(OK_RESPONSE)
             }
             else -> {
@@ -308,6 +494,9 @@ class DfsMaster {
             }
             else -> {
                 path.truncate(request.size)
+
+                saveDfsState()
+
                 return StatusResponse(OK_RESPONSE)
             }
         }
@@ -325,6 +514,9 @@ class DfsMaster {
             }
             else -> {
                 path.delete()
+
+                saveDfsState()
+
                 return StatusResponse(OK_RESPONSE)
             }
         }
@@ -363,6 +555,8 @@ class DfsMaster {
         val CHUNK_SIZE = 4 * 1024
 
         val REPLICA_COUNT = 2
+
+        val logger = LoggerFactory.getLogger(DfsMaster::class.java)
 
         val b64encoder = Base64.getEncoder()
         val b64decoder = Base64.getDecoder()

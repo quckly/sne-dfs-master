@@ -1,5 +1,6 @@
 package pw.quckly.sne.dfs.master
 
+import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
@@ -9,26 +10,51 @@ import com.github.kittinunf.result.Result
 import pw.quckly.sne.dfs.master.api.*
 import ru.serce.jnrfuse.ErrorCodes
 import ru.serce.jnrfuse.struct.FileStat
-import java.lang.IllegalArgumentException
 import java.util.*
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.collections.ArrayList
 
 class FileChunk {
     // Mapping ServerID -> ChunkID
     var mapping = ArrayList<Pair<Int, Int>>()
+
+    constructor()
+
+    constructor(mapping: List<Pair<Int, Int>>) {
+        this.mapping = ArrayList(mapping)
+    }
 }
 
 class MemoryDirectory : MemoryPath {
 
+    @JsonIgnore
     private val dfs: DfsMaster
-    private val contents = ArrayList<MemoryPath>()
+    var contents = ArrayList<MemoryPath>()
+        private set
 
     constructor(name: String, dfs: DfsMaster) : super(name) {
         this.dfs = dfs
     }
 
+    constructor(name: String, dfs: DfsMaster, contents: List<MemoryPath>) : super(name) {
+        this.dfs = dfs
+        this.contents = ArrayList(contents)
+    }
+
     constructor(name: String, parent: MemoryDirectory, dfs: DfsMaster) : super(name, parent) {
         this.dfs = dfs
+    }
+
+    fun fixParentOfContents() {
+        val contentsSnapshot = this.contents.toList()
+
+        for (path in contentsSnapshot) {
+            path.changeParent(this)
+
+            if (path is MemoryDirectory) {
+                path.fixParentOfContents()
+            }
+        }
     }
 
     @Synchronized
@@ -95,17 +121,19 @@ class MemoryDirectory : MemoryPath {
         }
     }
 
+    @JsonIgnore
     fun isEmpty(): Boolean {
         return contents.isEmpty()
     }
 
+    @JsonIgnore
     override fun getAttr(): AttrResponse {
         // 0777 == 0x1FF
         return AttrResponse(0, FileStat.S_IFDIR or 0x1FF, 0, -1, -1)
     }
 }
 
-class MemoryFile(name: String, parent: MemoryDirectory, val dfs: DfsMaster) : MemoryPath(name, parent) {
+class MemoryFile(name: String, parent: MemoryDirectory?, @JsonIgnore val dfs: DfsMaster) : MemoryPath(name, parent) {
 
     var size: Long = 0
     var chunks = CopyOnWriteArrayList<FileChunk>()
@@ -125,7 +153,7 @@ class MemoryFile(name: String, parent: MemoryDirectory, val dfs: DfsMaster) : Me
         }
 
         // Determine last read byte and count
-        val rightBorder = Math.min(offset + size - 1, size - 1)
+        val rightBorder = Math.min(offset + size - 1, this.size - 1)
         val bytesToRead = Math.max((rightBorder - offset + 1).toInt(), 0)
 
         if (bytesToRead == 0) {
@@ -255,6 +283,8 @@ class MemoryFile(name: String, parent: MemoryDirectory, val dfs: DfsMaster) : Me
         if (successChunksCount == chunk.mapping.size) {
             // All written
 
+            // Change file size
+            this.size = Math.max(this.size, rightBorder + 1)
         } else if (successChunksCount > 0) {
             // At least one
             // TODO: Some logic maybe
@@ -287,6 +317,7 @@ class MemoryFile(name: String, parent: MemoryDirectory, val dfs: DfsMaster) : Me
         }
     }
 
+    @JsonIgnore
     override fun getAttr(): AttrResponse {
         // 0777 == 0x1FF
         return AttrResponse(0, FileStat.S_IFREG or 0x1FF, size, -1, -1)
@@ -324,6 +355,7 @@ abstract class MemoryPath {
     var name: String
         protected set
 
+    @JsonIgnore
     var parent: MemoryDirectory?
         protected set
 
@@ -364,5 +396,7 @@ abstract class MemoryPath {
     }
 
     abstract fun delete()
+
+    @JsonIgnore
     abstract fun getAttr(): AttrResponse
 }
