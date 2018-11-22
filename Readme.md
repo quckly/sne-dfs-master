@@ -3,6 +3,8 @@ DFS Master (Name) server
 
 Core of DFS. Client uses master's HTTP API for performing FS calls.
 
+Written by Kotlin. Uses Spring Boot, Spring MVC.
+
 ## Running DFS
 ```sh
 docker run -ti --rm -p 10010:10010 -v /tmp/storage:/var/storage --net=host quckly/sne-dfs-storage:latest \
@@ -14,9 +16,40 @@ docker run -ti --rm -p 10011:10011 -v /tmp/storage:/var/storage --net=host quckl
     -guid 1b4dbacd-0a38-4636-b3ed-101f34a32153
 ```
 
+## Master server
+### Build
+```sh
+git clone https://github.com/quckly/sne-dfs-master
+cd sne-dfs-master
+docker build -t quckly/sne-dfs-master:latest .
+```
+
+### Run
+```sh
+
+```
+
+##### Application params:
+- `app....` - ...
+
+## Storage server
+### Build
+```sh
+git clone https://github.com/wavvs/dfstorage sne-dfs-storage
+cd sne-dfs-storage
+docker build -t quckly/sne-dfs-storage:latest .
+```
+
+### Run
+```sh
+
+```
+
+##### Application params:
+- `app....` - ...
 
 ## Extra
-### Guids
+##### Guids
 https://www.guidgenerator.com/online-guid-generator.aspx
 ```
 26f4517d-b29a-4d53-b8aa-cdc3b0e3051c
@@ -38,5 +71,9 @@ a8ee1c53-4601-4fb7-a34f-512ee54c7748
 45b7907e-54d1-4407-8a3a-3fc3dfa069de
 4471d347-e605-4229-accd-bcc0993bb097
 e7bfce86-b72e-4161-8c3d-83aa111e8431
-
 ```
+
+## Links:
+Master server: https://github.com/quckly/sne-dfs-master 
+Client application: https://github.com/quckly/sne-dfs-client 
+Storage server: https://github.com/wavvs/dfstorage 
