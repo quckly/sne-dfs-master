@@ -6,14 +6,38 @@ Core of DFS. Client uses master's HTTP API for performing FS calls.
 Written by Kotlin. Uses Spring Boot, Spring MVC.
 
 ## Running DFS
-```sh
-docker run -ti --rm -p 10010:10010 -v /tmp/storage:/var/storage --net=host quckly/sne-dfs-storage:latest \
+Creating docker images is described in Master and Storage chapters below.
+
+Create directory for storage files  
+```mkdir /tmp/storage```
+
+Create a network for docker containers  
+```sudo docker network create --attachable dfs-net```
+
+Start core of DFS
+```
+docker run -d --rm  -v /tmp/storage:/var/storage --net=dfs-net quckly/sne-dfs-storage:latest \
     -mhost 127.0.0.1 -mport 10001 -port 10010 -file /var/storage/s1 -size 16KB -interval 5 \
     -guid b2a1172b-fdac-4ec0-9f21-6de789c3fce1
     
-docker run -ti --rm -p 10011:10011 -v /tmp/storage:/var/storage --net=host quckly/sne-dfs-storage:latest \
+docker run -d --rm  -v /tmp/storage:/var/storage --net=dfs-net quckly/sne-dfs-storage:latest \
     -mhost 127.0.0.1 -mport 10001 -port 10011 -file /var/storage/s2 -size 16KB -interval 5 \
     -guid 1b4dbacd-0a38-4636-b3ed-101f34a32153
+    
+docker run -d --rm  -v /tmp/storage:/var/storage --net=dfs-net \
+    -e SERVER_PORT=10001 \
+    -e APP_REQUESTS_TIMEOUT=2000 \
+    -e APP_METAINFO_LOCATION=/var/storage/meta.json \
+    -p 10001:10001 \
+    quckly/sne-dfs-master:latest
+```
+
+Start client. More info in https://github.com/quckly/sne-dfs-client 
+```sh
+java -jar build/libs/sne-dfs-client-0.0.1-SNAPSHOT.jar \
+--app.client.mountpath=/tmp/mnt \
+--app.master.address=http://127.0.0.1:10001 \
+--app.requests.timeout=10000
 ```
 
 ## Master server
@@ -26,11 +50,17 @@ docker build -t quckly/sne-dfs-master:latest .
 
 ### Run
 ```sh
-
+docker run -ti --rm  -v /tmp/storage:/var/storage --net=dfs-net \
+    -e SERVER_PORT=10001 \
+    -e APP_REQUESTS_TIMEOUT=2000 \
+    -e APP_METAINFO_LOCATION=/var/storage/meta.json \
+    quckly/sne-dfs-master:latest
 ```
 
 ##### Application params:
-- `app....` - ...
+- `app.requests.timeout` - timeout of http requestes to master in milliseconds
+- `app.requests.timeout` - timeout of http requestes to storage servers in milliseconds
+- `app.metainfo.location` - file where to save master server information (meta information about file tree, ...)
 
 ## Storage server
 ### Build
@@ -42,11 +72,19 @@ docker build -t quckly/sne-dfs-storage:latest .
 
 ### Run
 ```sh
-
+docker run -ti --rm  -v /tmp/storage:/var/storage --net=dfs-net quckly/sne-dfs-storage:latest \
+    -mhost 127.0.0.1 -mport 10001 -port 10011 -file /var/storage/s2 -size 16KB -interval 5 \
+    -guid 1b4dbacd-0a38-4636-b3ed-101f34a32153
 ```
 
 ##### Application params:
-- `app....` - ...
+- `mhost` - IP address of master server
+- `mport` - port of master server
+- `port` - port of storage server
+- `file` - storage file which is storing chunks
+- `size` - size of file (and storage)
+- `interval` - heartbeat interval in seconds
+- `guid` - GUID of storage server
 
 ## Extra
 ##### Guids
@@ -75,5 +113,7 @@ e7bfce86-b72e-4161-8c3d-83aa111e8431
 
 ## Links:
 Master server: https://github.com/quckly/sne-dfs-master 
+
 Client application: https://github.com/quckly/sne-dfs-client 
+
 Storage server: https://github.com/wavvs/dfstorage 
